@@ -1,0 +1,15 @@
+# R
+.Rhistory
+.RData
+.Rproj.user/
+*.Rcheck/
+
+# Output database (large binary — not version-controlled)
+*.duckdb
+*.duckdb.wal
+
+# Reports (generated artifacts)
+reports/*.html
+
+# Temp files
+tmp_*.R

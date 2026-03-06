@@ -1,0 +1,651 @@
+# codebook/schema.yml
+# Source of truth for all field definitions, types, and extraction metadata.
+# Reference template: v1002
+# Vocabulary values for controlled fields are in codebook/vocabulary.csv
+
+tables:
+
+  # ── 1.Meta ──────────────────────────────────────────────────────────────────
+  # Fixed key-value layout: col A = label, col C = value
+  study_characteristics:
+    sheet: "1.Meta"
+    mode: key_value
+    label_col: A
+    value_col: C
+    fields:
+      - name: template_version
+        row_label: "template version"
+        type: text
+        required: true
+      - name: extractor
+        row_label: "extractor id"
+        type: controlled_vocab
+        vocabulary: extractor_id
+        required: true
+      - name: doc_id_src
+        row_label: "document id"
+        type: text
+        required: true
+      - name: doi
+        row_label: "doi (or url in case doi is not provided)"
+        type: text
+        required: false
+      - name: title
+        row_label: "title"
+        type: text
+        required: true
+
+  # ── 2a.Area ─────────────────────────────────────────────────────────────────
+  # Tabular: one row per site ID. Header at row 3, data from row 6.
+  area_general:
+    sheet: "2a.Area"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: country
+        type: controlled_vocab
+        vocabulary: country
+        required: true
+      - name: area
+        type: text
+        required: true
+      - name: area_type
+        type: controlled_vocab
+        vocabulary: study_area_type
+      - name: admin_high
+        type: text
+      - name: admin_high_type
+        type: controlled_vocab
+        vocabulary: study_area_type
+      - name: site_id
+        type: text
+        note: auto-generated in Excel from country+area+admin_high
+      - name: coord_source
+        type: controlled_vocab
+        vocabulary: coord_source
+      - name: coord_lat
+        type: numeric
+      - name: coord_lat_dir
+        type: controlled_vocab
+        vocabulary: coord_lat
+      - name: coord_long
+        type: numeric
+      - name: coord_long_dir
+        type: controlled_vocab
+        vocabulary: coord_long
+      - name: coord_buff
+        type: numeric
+      - name: coord_join
+        type: text
+        note: auto-generated
+      - name: rainy_n
+        type: controlled_vocab
+        vocabulary: number_rainy_seasons
+      - name: season1_s
+        type: controlled_vocab
+        vocabulary: season
+      - name: season1_e
+        type: controlled_vocab
+        vocabulary: season
+      - name: season1_l
+        type: numeric
+      - name: season2_s
+        type: controlled_vocab
+        vocabulary: season
+      - name: season2_e
+        type: controlled_vocab
+        vocabulary: season
+      - name: season2_l
+        type: numeric
+      - name: farm_type
+        type: controlled_vocab
+        vocabulary: farming_type
+      - name: prodsys_type
+        type: controlled_vocab
+        vocabulary: production_system
+      - name: source_2a
+        type: controlled_vocab
+        vocabulary: source_type
+      - name: pg_2a
+        type: text
+      - name: table_2a
+        type: text
+      - name: fig_2a
+        type: text
+      - name: note_2a
+        type: text
+
+  # ── 2b.Farm ─────────────────────────────────────────────────────────────────
+  # Tabular: one row per site ID x product. Header at row 3, data from row 6.
+  production_system:
+    sheet: "2b.Farm"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: site_id
+        type: text
+        required: true
+      - name: prod_categ
+        type: controlled_vocab
+        vocabulary: product_category
+      - name: prod_typ
+        type: controlled_vocab
+        vocabulary: product_type
+      - name: prod_name
+        type: controlled_vocab
+        vocabulary: product_name
+        note: multi-select
+      - name: prod_other
+        type: text
+      - name: source_2b
+        type: controlled_vocab
+        vocabulary: source_type
+      - name: pg_2b
+        type: text
+      - name: table_2b
+        type: text
+      - name: fig_2b
+        type: text
+      - name: note_2b
+        type: text
+
+  # ── 2c.Climate ──────────────────────────────────────────────────────────────
+  # Tabular: one row per site x year x variable. Header at row 3, data from row 6.
+  area_climate:
+    sheet: "2c.Climate"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: site_id
+        type: text
+        required: true
+        note: multi-select from 2a site IDs
+      - name: clim_yr
+        type: text
+      - name: clim_var
+        type: controlled_vocab
+        vocabulary: climate_variable
+      - name: clim_season
+        type: controlled_vocab
+        vocabulary: season
+      - name: clim_stat
+        type: controlled_vocab
+        vocabulary: climate_statistic
+      - name: clim_val
+        type: numeric
+      - name: clim_unit
+        type: controlled_vocab
+        vocabulary: climate_data_unit
+      - name: source_2c
+        type: controlled_vocab
+        vocabulary: source_type
+      - name: pg_2c
+        type: text
+      - name: table_2c
+        type: text
+      - name: fig_2c
+        type: text
+      - name: note_2c
+        type: text
+
+  # ── 3a.Methods ──────────────────────────────────────────────────────────────
+  # Fixed key-value grid: col B = method label, col E = value, col F = notes.
+  # Rows 3-41. One wide output row per study (~20 method dimension columns).
+  method:
+    sheet: "3a.Methods"
+    mode: labeled_rows
+    label_col: B
+    value_col: E
+    note_col: F
+    source_col: G
+    pg_col: H
+    table_col: I
+    fig_col: J
+    fields:
+      - name: design
+        row_label: "study design"
+        type: controlled_vocab
+        vocabulary: study_design
+      - name: design_sub
+        row_label: "study design - subtype"
+        type: controlled_vocab
+        vocabulary: study_design_subtype
+      - name: design_other
+        row_label: "other design elements"
+        type: controlled_vocab
+        vocabulary: other_design_elements
+        note: multi-select
+      - name: design_clear
+        row_label: "clear study design"
+        type: controlled_vocab
+        vocabulary: yes_no
+      - name: sampl_strateg
+        row_label: "sampling strategy"
+        type: controlled_vocab
+        vocabulary: sampling_strategy
+        note: multi-select
+      - name: sampl_strateg_detail
+        row_label: "sampling strategy detail"
+        type: text
+      - name: sampl_unit
+        row_label: "sampling unit"
+        type: controlled_vocab
+        vocabulary: sampling_unit
+      - name: sampl_bias
+        row_label: "sampling bias"
+        type: controlled_vocab
+        vocabulary: sampling_bias
+        note: multi-select
+      - name: sampl_n
+        row_label: "sample size"
+        type: integer
+      - name: sampl_n_note
+        row_label: "sample size note"
+        type: text
+      - name: data_type
+        row_label: "data type"
+        type: controlled_vocab
+        vocabulary: data_type
+        note: multi-select
+      - name: data_primary
+        row_label: "primary data collection method"
+        type: controlled_vocab
+        vocabulary: data_collection_method
+        note: multi-select
+      - name: data_secondary
+        row_label: "secondary data source"
+        type: controlled_vocab
+        vocabulary: secondary_data_source
+        note: multi-select
+      - name: analysis_type
+        row_label: "type of analysis"
+        type: controlled_vocab
+        vocabulary: analysis_type
+      - name: analysis_software
+        row_label: "analysis software"
+        type: text
+      - name: bias_confounding
+        row_label: "confounding bias"
+        type: controlled_vocab
+        vocabulary: bias_level
+      - name: bias_selection
+        row_label: "selection bias"
+        type: controlled_vocab
+        vocabulary: bias_level
+      - name: bias_attrition
+        row_label: "attrition bias"
+        type: controlled_vocab
+        vocabulary: bias_level
+      - name: bias_performance
+        row_label: "performance bias"
+        type: controlled_vocab
+        vocabulary: bias_level
+      - name: bias_detection
+        row_label: "detection bias"
+        type: controlled_vocab
+        vocabulary: bias_level
+      - name: bias_reporting
+        row_label: "reporting bias"
+        type: controlled_vocab
+        vocabulary: bias_level
+
+  # ── 3b.Sample ───────────────────────────────────────────────────────────────
+  # Tabular: one row per sample group. Header at row 2, data from row 5.
+  method_sample:
+    sheet: "3b.Sample"
+    mode: dynamic
+    header_row: 2
+    data_start_row: 5
+    fields:
+      - name: grp_type
+        type: controlled_vocab
+        vocabulary: group_type
+        required: true
+      - name: grp_num
+        type: integer
+      - name: grp_desc
+        type: text
+      - name: sample_n
+        type: integer
+      - name: sample_unit
+        type: controlled_vocab
+        vocabulary: sample_unit
+      - name: source_3b
+        type: controlled_vocab
+        vocabulary: source_type
+      - name: pg_3b
+        type: text
+      - name: table_3b
+        type: text
+      - name: fig_3b
+        type: text
+      - name: note_3b
+        type: text
+
+  # ── 4a.StratList ────────────────────────────────────────────────────────────
+  # Tabular: one row per strategy. Header at row 3, data from row 6.
+  options:
+    sheet: "4a.StratList"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: option_type
+        type: controlled_vocab
+        vocabulary: strategy_type
+        required: true
+      - name: option
+        type: text
+        required: true
+        note: verbatim strategy name from text
+      - name: option_yr
+        type: controlled_vocab
+        vocabulary: year_or_ni
+        note: multi-select
+      - name: option_who
+        type: controlled_vocab
+        vocabulary: strategy_adopter
+      - name: option_who_spec
+        type: controlled_vocab
+        vocabulary: strategy_adopter_spec
+      - name: note_4a
+        type: text
+
+  # ── 4b.OutcList ─────────────────────────────────────────────────────────────
+  # Tabular: one row per outcome. Header at row 3, data from row 6.
+  outcomes:
+    sheet: "4b.OutcList"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: outcome_type
+        type: controlled_vocab
+        vocabulary: outcome_type
+        required: true
+      - name: outcome
+        type: text
+        required: true
+        note: verbatim outcome name from text
+      - name: outcome_unit
+        type: text
+      - name: outcome_formula
+        type: text
+      - name: note_4b
+        type: text
+
+  # ── 5a.RatStrat ─────────────────────────────────────────────────────────────
+  # Tabular: one row per rationale-strategy link. Header at row 3, data from row 6.
+  # v1002 adds "rationale variable verbatim" at col D (older versions: col D = strategy).
+  link1_rationale_option:
+    sheet: "5a.RatStrat"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: rationale_typ
+        type: controlled_vocab
+        vocabulary: rationale_type
+        required: true
+      - name: clim
+        type: controlled_vocab
+        vocabulary: climate_driver
+      - name: nonclim
+        type: controlled_vocab
+        vocabulary: nonclimate_driver
+      - name: rationale_verbatim
+        type: text
+        note: "v1002+ only; absent in v3007/v1908/v1710/v0611"
+      - name: option
+        type: text
+        required: true
+        note: multi-select if bundle
+      - name: option_level
+        type: controlled_vocab
+        vocabulary: strategy_level
+      - name: link1_method
+        type: controlled_vocab
+        vocabulary: relationship_method
+      - name: link1_type
+        type: controlled_vocab
+        vocabulary: relationship_direction
+      - name: link1_p
+        type: controlled_vocab
+        vocabulary: significance
+      - name: source_5a
+        type: controlled_vocab
+        vocabulary: source_type
+      - name: pg_5a
+        type: text
+      - name: table_5a
+        type: text
+      - name: fig_5a
+        type: text
+      - name: note_5a
+        type: text
+
+  # ── 5b.StratOutc ────────────────────────────────────────────────────────────
+  # Tabular: one row per strategy-outcome estimate. Header at row 4, data from row 7.
+  link2_option_outcome:
+    sheet: "5b.StratOutc"
+    mode: dynamic
+    header_row: 4
+    data_start_row: 7
+    fields:
+      - name: option_t
+        type: text
+        required: true
+        note: treatment strategy; multi-select if bundle
+      - name: option_c
+        type: text
+        note: control/comparison strategy
+      - name: outcome
+        type: text
+        required: true
+      - name: outcome_prod
+        type: text
+        note: multi-select from 2b products
+      - name: outcome_who
+        type: controlled_vocab
+        vocabulary: outcome_beneficiary
+      - name: who_spec
+        type: controlled_vocab
+        vocabulary: outcome_beneficiary_spec
+      - name: outcome_yr
+        type: text
+        note: multi-select
+      - name: outcome_siteid
+        type: text
+        note: multi-select from 2a site IDs
+      - name: est_type
+        type: controlled_vocab
+        vocabulary: estimate_type
+      - name: obs_type
+        type: controlled_vocab
+        vocabulary: observation_type
+      - name: est_gr
+        type: controlled_vocab
+        vocabulary: estimate_group
+      - name: est_subgr
+        type: text
+      - name: est_val
+        type: numeric
+      - name: est_stat
+        type: controlled_vocab
+        vocabulary: estimate_statistic
+      - name: est_stat_other
+        type: text
+      - name: est_p
+        type: controlled_vocab
+        vocabulary: significance
+      - name: error_val
+        type: numeric
+      - name: error_type
+        type: controlled_vocab
+        vocabulary: error_type
+      - name: est_conf
+        type: text
+      - name: est_method
+        type: text
+      - name: path_id
+        type: text
+        note: auto-generated
+      - name: patg_type
+        type: controlled_vocab
+        vocabulary: causal_path_type
+      - name: moderator
+        type: text
+      - name: source_5b
+        type: controlled_vocab
+        vocabulary: source_type
+      - name: pg_5b
+        type: text
+      - name: table_5b
+        type: text
+      - name: fig_5b
+        type: text
+      - name: note_5b
+        type: text
+
+  # ── 5c.Mediators ────────────────────────────────────────────────────────────
+  # Tabular: one row per mediator. Header at row 3, data from row 6.
+  link3_option_med_outcome:
+    sheet: "5c.Mediators"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: path_id
+        type: text
+        required: true
+        note: links to link2_option_outcome.path_id
+      - name: mediator
+        type: text
+        required: true
+      - name: med_unit
+        type: text
+      - name: med_type
+        type: controlled_vocab
+        vocabulary: mediation_type
+      - name: med_p
+        type: controlled_vocab
+        vocabulary: significance
+      - name: med_conf
+        type: text
+      - name: med_val
+        type: numeric
+      - name: med_val_unit
+        type: text
+      - name: med_method
+        type: controlled_vocab
+        vocabulary: mediation_method
+      - name: med_method_other
+        type: text
+      - name: source_5c
+        type: controlled_vocab
+        vocabulary: source_type
+      - name: pg_5c
+        type: text
+      - name: table_5c
+        type: text
+      - name: fig_5c
+        type: text
+      - name: note_5c
+        type: text
+
+  # ── 5d.OtherV ───────────────────────────────────────────────────────────────
+  # Tabular: one row per other causal variable. Header at row 3, data from row 6.
+  # v1002 adds "climate variable" (col D) and "study area" / site_id (col L).
+  # v3007/v1908/v1710: no col D climate var; site_id absent (col K = source type).
+  link4_other_vars:
+    sheet: "5d.OtherV"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: var
+        type: text
+        required: true
+      - name: var_role
+        type: controlled_vocab
+        vocabulary: variable_role
+      - name: var_unit
+        type: text
+      - name: var_clim
+        type: controlled_vocab
+        vocabulary: yes_no
+        note: "v1002+ only (col D); absent in older versions"
+      - name: option
+        type: text
+        note: multi-select
+      - name: outcome
+        type: text
+      - name: link_direction
+        type: controlled_vocab
+        vocabulary: relationship_direction
+      - name: link_p
+        type: controlled_vocab
+        vocabulary: significance
+      - name: link_conf
+        type: text
+      - name: link_method
+        type: controlled_vocab
+        vocabulary: analytical_method
+      - name: link_method_other
+        type: text
+      - name: site_id
+        type: text
+        note: "v1002+ only (col L); absent in v3007/v1908/v1710"
+      - name: source_5d
+        type: controlled_vocab
+        vocabulary: source_type
+      - name: pg_5d
+        type: text
+      - name: table_5d
+        type: text
+      - name: fig_5d
+        type: text
+      - name: note_5d
+        type: text
+
+  # ── 5e.Effectiveness ────────────────────────────────────────────────────────
+  # Tabular: one row per outcome x risk assessment. Header at row 3, data from row 6.
+  # Present in v1002 only; absent in all earlier template versions.
+  effectiveness:
+    sheet: "5e.Effectiveness"
+    mode: dynamic
+    header_row: 3
+    data_start_row: 6
+    fields:
+      - name: outcome
+        type: text
+        required: true
+        note: links to outcomes table
+      - name: outcome_spec
+        type: text
+      - name: outcome_risk
+        type: controlled_vocab
+        vocabulary: outcome_risk_anchoring
+        required: true
+      - name: clim_var
+        type: text
+        note: multi-select from 5a/5b/5d climate vars
+      - name: clim_var_other
+        type: text
+      - name: risk_sys
+        type: controlled_vocab
+        vocabulary: risk_system_change
+      - name: risk_dyn
+        type: controlled_vocab
+        vocabulary: risk_dynamics
+      - name: risk_sign
+        type: controlled_vocab
+        vocabulary: risk_sign
+      - name: risk_certain
+        type: controlled_vocab
+        vocabulary: risk_certainty
+      - name: note_5e
+        type: text

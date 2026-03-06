@@ -1,0 +1,13 @@
+default:
+  workspace: !expr file.path(Sys.getenv("USERPROFILE"), "OneDrive",
+    "OneDrive - CGIAR",
+    "Nowak, Andreea (Alliance Bioversity-CIAT)'s files - AE-SysRev-shared-backup0306")
+  extractors:
+    - Boris
+    - Charity
+    - Jabesh
+    - Judy
+  target_subfolders:
+    - "2.Extracted"
+    - "3.Quality control"
+  output_db: "sysrev.duckdb"
