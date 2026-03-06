@@ -1,0 +1,395 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-03-03"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+##############################################################################
+# Workflow 2: Create Separate Databases for Each Excel File Tab
+#
+# Reads all .xlsm files from "2.Extracted" and "3.Quality control" sub-folders
+# across Boris / Charity / Jabesh / Judy, and writes 13 CSV databases.
+#
+# Requirements:  install.packages(c("readxl", "dplyr", "stringr", "tibble"))
+##############################################################################
+
+library(readxl)
+library(dplyr)
+library(stringr)
+library(tibble)
+
+# ── 0. CONFIGURATION ──────────────────────────────────────────────────────────
+
+workspace         <- r"(C:\Users\ANowak\OneDrive - CGIAR\AE-SysRev-shared)"
+extractors        <- c("Boris", "Charity", "Jabesh", "Judy")
+target_subfolders <- c("2.Extracted", "3.Quality control")
+output_dir        <- file.path(workspace, "databases")
+dir.create(output_dir, showWarnings = FALSE, recursive = TRUE)
+
+# ── 1. HELPERS ─────────────────────────────────────────────────────────────────
+
+# Parse doc_id and standardised version from a filename.
+# Handles all separator styles: "v1710 - JM00466", "v.1710-JM00466", "v3007 – BS0003"
+parse_filename <- function(filename) {
+  base  <- tools::file_path_sans_ext(basename(filename))
+  parts <- str_split(base, "\\s*[-\u2013\u2014]\\s*", n = 2)[[1]]
+  if (length(parts) == 2) {
+    version <- str_replace_all(str_trim(parts[1]), "[. ]", "")  # v.1710 → v1710
+    doc_id  <- str_trim(parts[2])
+  } else {
+    version <- NA_character_
+    doc_id  <- base
+  }
+  list(doc_id = doc_id, version = version)
+}
+
+# Convert Excel column letter(s) to a 1-based integer index (A=1, AA=27, …)
+col_letter_to_int <- function(col) {
+  chars <- strsplit(toupper(trimws(col)), "")[[1]]
+  Reduce(function(acc, ch) acc * 26L + (utf8ToInt(ch) - utf8ToInt("A") + 1L),
+         chars, 0L)
+}
+
+# Read a full sheet as a character data frame, returning NULL on error
+read_sheet_safe <- function(filepath, sheet) {
+  tryCatch(
+    suppressMessages(
+      read_excel(filepath, sheet = sheet, col_names = FALSE, col_types = "text")
+    ),
+    error = function(e) NULL
+  )
+}
+
+# Check whether a named sheet exists in a workbook
+sheet_exists <- function(filepath, sheet_name) {
+  tryCatch(sheet_name %in% excel_sheets(filepath), error = function(e) FALSE)
+}
+
+# FIXED layout: each variable is a single scalar cell
+extract_fixed <- function(raw, db_def, doc_id) {
+  row_data <- list(doc_id = doc_id)
+  for (v in db_def$vars) {
+    ci  <- col_letter_to_int(v$col)
+    ri  <- v$row
+    val <- if (nrow(raw) >= ri && ncol(raw) >= ci) raw[[ri, ci]] else NA_character_
+    row_data[[v$new_name]] <- val
+  }
+  as_tibble(row_data)
+}
+
+# DYNAMIC layout: values flow downward from start_row; keep rows up to last non-empty
+extract_dynamic <- function(raw, db_def, doc_id) {
+  start <- db_def$start_row
+  if (nrow(raw) < start) return(NULL)
+
+  col_data <- lapply(db_def$vars, function(v) {
+    ci <- col_letter_to_int(v$col)
+    if (ncol(raw) < ci) rep(NA_character_, nrow(raw) - start + 1L)
+    else as.character(raw[[ci]][start:nrow(raw)])
+  })
+  names(col_data) <- sapply(db_def$vars, `[[`, "new_name")
+
+  df <- as_tibble(col_data)
+  n  <- max(sapply(df, function(x) sum(!is.na(x) & nchar(trimws(x)) > 0L)),
+            na.rm = TRUE)
+  if (n == 0L) return(NULL)
+  bind_cols(tibble(doc_id = doc_id), df[seq_len(n), , drop = FALSE])
+}
+
+# ── 2. COLLECT ELIGIBLE FILES ──────────────────────────────────────────────────
+
+collect_files <- function() {
+  records <- list()
+  for (ext in extractors) {
+    for (sub in target_subfolders) {
+      dir_path <- file.path(workspace, ext, sub)
+      if (!dir.exists(dir_path)) next
+      files <- list.files(dir_path, pattern = "\\.xlsm$",
+                          full.names = TRUE, ignore.case = TRUE)
+      for (fp in files) {
+        p      <- parse_filename(fp)
+        status <- ifelse(grepl("2\\.Extracted", sub, ignore.case = TRUE),
+                         "extracted", "qc")
+        records[[length(records) + 1]] <- tibble(
+          filepath  = fp,
+          doc_id    = p$doc_id,
+          version   = p$version,
+          extractor = str_extract(p$doc_id, "^[A-Z]{2}"),
+          status    = status
+        )
+      }
+    }
+  }
+  bind_rows(records)
+}
+
+file_list <- collect_files()
+message("Found ", nrow(file_list), " eligible files.")
+
+# ── 3. DATABASE DEFINITIONS ────────────────────────────────────────────────────
+# Encoded directly from Template-Database-Equivalents.xlsx (Sheet1, col I = db name,
+# col J = new variable name, col E = source column, col G = value start cell).
+
+db_defs <- list(
+
+  study_characteristics = list(
+    tab = "1.Meta", mode = "fixed",
+    vars = list(
+      list(col="C", row=3L, new_name="version"),
+      list(col="C", row=4L, new_name="extractor"),
+      list(col="C", row=5L, new_name="document"),
+      list(col="C", row=6L, new_name="doc_id_src"),
+      list(col="C", row=7L, new_name="doi"),
+      list(col="C", row=8L, new_name="title"),
+      list(col="C", row=9L, new_name="doi_linked")
+    )
+  ),
+
+  area_general = list(
+    tab="2a.Area", mode="dynamic", start_row=6L,
+    vars = list(
+      list(col="A",  new_name="country"),       list(col="B",  new_name="area"),
+      list(col="C",  new_name="area_type"),      list(col="D",  new_name="admin_high"),
+      list(col="E",  new_name="admin_high_type"),list(col="F",  new_name="site_id"),
+      list(col="G",  new_name="coord_source"),   list(col="H",  new_name="coord_lat_n"),
+      list(col="I",  new_name="cood_lat"),        list(col="J",  new_name="coord_long_n"),
+      list(col="K",  new_name="cood_long"),       list(col="L",  new_name="coord_buff"),
+      list(col="M",  new_name="coord_join"),      list(col="N",  new_name="rainy_n"),
+      list(col="O",  new_name="season1_s"),       list(col="P",  new_name="season1_e"),
+      list(col="Q",  new_name="season1_l"),       list(col="R",  new_name="season2_s"),
+      list(col="S",  new_name="season2_e"),       list(col="T",  new_name="season2_l"),
+      list(col="U",  new_name="farm_type"),       list(col="V",  new_name="prodsys_type"),
+      list(col="W",  new_name="source_2a"),       list(col="X",  new_name="pg_2a"),
+      list(col="Y",  new_name="table_2a"),        list(col="Z",  new_name="fig_2a"),
+      list(col="AA", new_name="note_2a")
+    )
+  ),
+
+  production_system = list(
+    tab="2b.Farm", mode="dynamic", start_row=6L,
+    vars = list(
+      list(col="A", new_name="site_id"),  list(col="B", new_name="prod_categ"),
+      list(col="C", new_name="prod_typ"), list(col="D", new_name="prod_name"),
+      list(col="E", new_name="prod_other"),list(col="F", new_name="source_2b"),
+      list(col="G", new_name="pg_2b"),    list(col="H", new_name="table_2b"),
+      list(col="I", new_name="fig_2b"),   list(col="J", new_name="note_2b")
+    )
+  ),
+
+  area_climate = list(
+    tab="2c.Climate", mode="dynamic", start_row=6L,
+    vars = list(
+      list(col="A", new_name="site_id"),   list(col="B", new_name="clim_yr"),
+      list(col="C", new_name="clim_var"),  list(col="D", new_name="clim_season"),
+      list(col="E", new_name="clim_stat"), list(col="F", new_name="clim_val"),
+      list(col="G", new_name="clim_unit"), list(col="H", new_name="source_2c"),
+      list(col="I", new_name="pg_2c"),     list(col="J", new_name="table_2c"),
+      list(col="K", new_name="fig_2c"),    list(col="L", new_name="note_2c")
+    )
+  ),
+
+  # 3a.Methods is a fixed grid; values in col E, free-text notes in col F
+  method = list(
+    tab="3a.Methods", mode="fixed",
+    vars = list(
+      list(col="E",row=3L,  new_name="design"),              list(col="F",row=3L,  new_name="design_note"),
+      list(col="E",row=4L,  new_name="design_sub"),          list(col="F",row=4L,  new_name="design_sub_note"),
+      list(col="E",row=5L,  new_name="design_other"),        list(col="F",row=5L,  new_name="design_other_note"),
+      list(col="E",row=6L,  new_name="design_clear"),        list(col="F",row=6L,  new_name="design_clear_note"),
+      list(col="E",row=7L,  new_name="sampl_strateg"),       list(col="F",row=7L,  new_name="sampl_strateg_note"),
+      list(col="E",row=8L,  new_name="sampl_strateg_spec"),  list(col="F",row=8L,  new_name="sampl_strateg_spec_note"),
+      list(col="E",row=9L,  new_name="sampl_stratif"),       list(col="F",row=9L,  new_name="sampl_stratif_note"),
+      list(col="E",row=10L, new_name="sampl_clear"),         list(col="F",row=10L, new_name="sampl_clear_note"),
+      list(col="E",row=11L, new_name="sampl_spec"),          list(col="F",row=11L, new_name="sampl_spec_note"),
+      list(col="E",row=12L, new_name="select_bias"),         list(col="F",row=12L, new_name="select_bias_note"),
+      list(col="E",row=13L, new_name="compar_group"),        list(col="F",row=13L, new_name="compar_group_note"),
+      list(col="E",row=14L, new_name="group_type_spec"),     list(col="F",row=14L, new_name="group_type_spec_note"),
+      list(col="E",row=15L, new_name="group_assign"),        list(col="F",row=15L, new_name="group_assign_note"),
+      list(col="E",row=16L, new_name="group_t_n"),           list(col="F",row=16L, new_name="group_t_n_note"),
+      list(col="E",row=17L, new_name="group_c_n"),           list(col="F",row=17L, new_name="group_c_n_note"),
+      list(col="E",row=18L, new_name="base_bal"),            list(col="F",row=18L, new_name="base_bal_note"),
+      list(col="E",row=19L, new_name="spill_risk"),          list(col="F",row=19L, new_name="spill_risk_note"),
+      list(col="E",row=20L, new_name="part_att"),            list(col="F",row=20L, new_name="part_att_note"),
+      list(col="E",row=21L, new_name="causal_stage"),        list(col="F",row=21L, new_name="causal_stage_note"),
+      list(col="E",row=22L, new_name="causal_design"),       list(col="F",row=22L, new_name="causal_design_note"),
+      list(col="E",row=23L, new_name="endogen_treat"),       list(col="F",row=23L, new_name="endogen_treat_note"),
+      list(col="E",row=24L, new_name="reverse_causal"),      list(col="F",row=24L, new_name="reverse_causal_note"),
+      list(col="E",row=25L, new_name="confounding"),         list(col="F",row=25L, new_name="confounding_note"),
+      list(col="E",row=26L, new_name="robust_check"),        list(col="F",row=26L, new_name="robust_check_note"),
+      list(col="E",row=27L, new_name="diff_eff"),            list(col="F",row=27L, new_name="diff_eff_note"),
+      list(col="E",row=28L, new_name="outcome_source"),      list(col="F",row=28L, new_name="outcome_source_note"),
+      list(col="E",row=29L, new_name="temp_struc"),          list(col="F",row=29L, new_name="temp_struc_note"),
+      list(col="E",row=30L, new_name="data_start_m"),        list(col="F",row=30L, new_name="data_start_m_note"),
+      list(col="E",row=31L, new_name="data_start_y"),        list(col="F",row=31L, new_name="data_start_y_note"),
+      list(col="E",row=32L, new_name="data_end_m"),          list(col="F",row=32L, new_name="data_end_m_note"),
+      list(col="E",row=33L, new_name="data_end_y"),          list(col="F",row=33L, new_name="data_end_y_note"),
+      list(col="E",row=34L, new_name="data_freq"),           list(col="F",row=34L, new_name="data_freq_note"),
+      list(col="E",row=35L, new_name="measure_unit_n"),      list(col="F",row=35L, new_name="measure_unit_n_note"),
+      list(col="E",row=36L, new_name="data_tool"),           list(col="F",row=36L, new_name="data_tool_note"),
+      list(col="E",row=37L, new_name="analysis_clear"),      list(col="F",row=37L, new_name="analysis_clear_note"),
+      list(col="E",row=38L, new_name="outcome_report"),      list(col="F",row=38L, new_name="outcome_report_note"),
+      list(col="E",row=39L, new_name="ethics"),              list(col="F",row=39L, new_name="ethics_note"),
+      list(col="E",row=40L, new_name="replicab"),            list(col="F",row=40L, new_name="replicab_note"),
+      list(col="E",row=41L, new_name="open_data"),           list(col="F",row=41L, new_name="open_data_note")
+    )
+  ),
+
+  method_sample = list(
+    tab="3b.Sample", mode="dynamic", start_row=5L,
+    vars = list(
+      list(col="A", new_name="group_type"), list(col="B", new_name="group_id"),
+      list(col="C", new_name="group_spec"), list(col="D", new_name="sample_size"),
+      list(col="E", new_name="sample_unit"),list(col="F", new_name="source_3b"),
+      list(col="G", new_name="pg_3b"),      list(col="H", new_name="table_3b"),
+      list(col="I", new_name="fig_3c"),     list(col="J", new_name="note_3c")
+    )
+  ),
+
+  options = list(
+    tab="4a.StratList", mode="dynamic", start_row=6L,
+    vars = list(
+      list(col="A", new_name="option_type"),    list(col="B", new_name="option"),
+      list(col="C", new_name="option_yr"),       list(col="D", new_name="option_who"),
+      list(col="E", new_name="option_who_spec"), list(col="F", new_name="note_option")
+    )
+  ),
+
+  outcomes = list(
+    tab="4b.OutcList", mode="dynamic", start_row=6L,
+    vars = list(
+      list(col="A", new_name="outcome_type"),   list(col="B", new_name="outcome"),
+      list(col="C", new_name="outcome_unit"),    list(col="D", new_name="outcome_formula"),
+      list(col="E", new_name="note_outc")
+    )
+  ),
+
+  link1_rationale_option = list(
+    tab="5a.RatStrat", mode="dynamic", start_row=5L,
+    vars = list(
+      list(col="A", new_name="rationale_typ"), list(col="B", new_name="clim"),
+      list(col="C", new_name="nonclim"),
+      list(col="D", new_name="option"),         # col D = "strategy" (v1002 adds rationale_txt here)
+      list(col="E", new_name="option_level"),   list(col="F", new_name="link1_method"),
+      list(col="G", new_name="link1_type"),     list(col="H", new_name="link1_p"),
+      list(col="I", new_name="source_5a"),      list(col="J", new_name="pg_5a"),
+      list(col="K", new_name="table_5a"),       list(col="L", new_name="fig_5a"),
+      list(col="M", new_name="note_5a")
+    )
+  ),
+
+  link2_option_outcome = list(
+    tab="5b.StratOutc", mode="dynamic", start_row=7L,
+    vars = list(
+      list(col="A",  new_name="option_t"),     list(col="B",  new_name="option_c"),
+      list(col="C",  new_name="outcome"),       list(col="D",  new_name="outcome_prod"),
+      list(col="E",  new_name="outcome_who"),   list(col="F",  new_name="who_spec"),
+      list(col="G",  new_name="outcome_yr"),    list(col="H",  new_name="outcome_siteid"),
+      list(col="I",  new_name="est_type"),      list(col="J",  new_name="obs_type"),
+      list(col="K",  new_name="est_gr"),        list(col="L",  new_name="est_subgr"),
+      list(col="M",  new_name="est_val"),       list(col="N",  new_name="est_stat"),
+      list(col="O",  new_name="est_stat_other"),list(col="P",  new_name="est_p"),
+      list(col="Q",  new_name="error_val"),     list(col="R",  new_name="error_type"),
+      list(col="S",  new_name="est_conf"),      list(col="T",  new_name="est_method"),
+      list(col="U",  new_name="path_id"),       list(col="V",  new_name="patg_type"),
+      list(col="W",  new_name="moderator"),     # absent in v3007 — NAs will fill
+      list(col="X",  new_name="source_5b"),     list(col="Y",  new_name="pg_5b"),
+      list(col="Z",  new_name="table_5b"),      list(col="AA", new_name="fig_5b"),
+      list(col="AB", new_name="note_5b")
+    )
+  ),
+
+  link3_option_med_outcome = list(
+    tab="5c.Mediators", mode="dynamic", start_row=6L,
+    vars = list(
+      list(col="A", new_name="path_id"),        list(col="B", new_name="med"),
+      list(col="C", new_name="med_unit"),        list(col="D", new_name="med_type"),
+      list(col="E", new_name="med_p"),           list(col="F", new_name="med_conf"),
+      list(col="G", new_name="med_size_val"),    list(col="H", new_name="med_size_unit"),
+      list(col="I", new_name="med_method"),      list(col="J", new_name="med_method_other"),
+      list(col="K", new_name="source_5c"),       list(col="L", new_name="pg_5c"),
+      list(col="M", new_name="table_5c"),        list(col="N", new_name="fig_5c"),
+      list(col="O", new_name="note_5c")
+    )
+  ),
+
+  link4_other_vars = list(
+    tab="5d.OtherV", mode="dynamic", start_row=6L,
+    vars = list(
+      list(col="A", new_name="var"),            list(col="B", new_name="var_role"),
+      list(col="C", new_name="var_unit"),
+      list(col="D", new_name="option"),          # v1002: var_clim in col D
+      list(col="E", new_name="outcome"),         list(col="F", new_name="link_direction"),
+      list(col="G", new_name="link_p"),          list(col="H", new_name="link_conf"),
+      list(col="I", new_name="link_method"),     list(col="J", new_name="link_method_other"),
+      list(col="K", new_name="site_id"),         # absent in v1908 / v3007 / v1710
+      list(col="L", new_name="source_5d"),       list(col="M", new_name="pg_5d"),
+      list(col="N", new_name="table_5d"),        list(col="O", new_name="fig_5d"),
+      list(col="P", new_name="note_5d")
+    )
+  ),
+
+  # Only present in v1002 files
+  effectiveness = list(
+    tab="5e.Effectiveness", mode="dynamic", start_row=6L,
+    vars = list(
+      list(col="A", new_name="outcome"),         list(col="B", new_name="outcome_spec"),
+      list(col="C", new_name="outcome_risk"),    list(col="D", new_name="clim_var"),
+      list(col="E", new_name="clim_var_other"),  list(col="F", new_name="risk_sys"),
+      list(col="G", new_name="risk_dyn"),        list(col="H", new_name="risk_sign"),
+      list(col="I", new_name="risk_certain"),    list(col="J", new_name="note_5e")
+    )
+  )
+)
+
+# ── 4. MAIN LOOP ───────────────────────────────────────────────────────────────
+
+db_results <- setNames(vector("list", length(db_defs)), names(db_defs))
+total      <- nrow(file_list)
+
+for (i in seq_len(total)) {
+  fp     <- file_list$filepath[i]
+  doc_id <- file_list$doc_id[i]
+  message(sprintf("[%d/%d] %s", i, total, basename(fp)))
+
+  for (db_name in names(db_defs)) {
+    def <- db_defs[[db_name]]
+    if (!sheet_exists(fp, def$tab)) next
+
+    raw <- read_sheet_safe(fp, def$tab)
+    if (is.null(raw) || nrow(raw) == 0L) next
+
+    result <- if (def$mode == "fixed") {
+      extract_fixed(raw, def, doc_id)
+    } else {
+      extract_dynamic(raw, def, doc_id)
+    }
+
+    if (!is.null(result) && nrow(result) > 0L)
+      db_results[[db_name]] <- c(db_results[[db_name]], list(result))
+  }
+}
+
+# ── 5. SAVE ────────────────────────────────────────────────────────────────────
+
+message("\nSaving to: ", output_dir)
+
+for (db_name in names(db_defs)) {
+  parts <- db_results[[db_name]]
+  if (length(parts) == 0L) { message("  ", db_name, ": no data — skipped."); next }
+
+  combined <- bind_rows(parts)
+  out_path <- file.path(output_dir, paste0(db_name, ".csv"))
+  write.csv(combined, out_path, row.names = FALSE, na = "")
+
+  message(sprintf("  %-35s -> %d rows x %d cols  [%s]",
+                  db_name, nrow(combined), ncol(combined), basename(out_path)))
+}
+
+message("\nDone.")
+```
+
