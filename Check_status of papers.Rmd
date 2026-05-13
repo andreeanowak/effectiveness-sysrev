@@ -1,0 +1,216 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-01-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(readxl)
+library(dplyr)
+library(stringr)
+library(writexl)
+library(janitor)
+```
+
+# Load files
+NeED TO CHECK:
+## Progress: Charity tab should be included
+## What happens with the early files - they are not captured in teh new column (not in the Progress probably)
+
+
+# WORKFLOW
+```{r}
+# Goal: Harmonize and compare extraction workflow status between:
+#   (a) the SUMMARY file (Extraction overview) and
+#   (b) the Progress tracker workbook (multiple sheets),
+# keyed on unique_study_id.
+#
+# 1) Read inputs
+# a) Read the SUMMARY file (sheet 1) into `summary_status`.
+# b) Read the Progress tracker across sheets 1–3 (no column names),
+#      clean each sheet to a standard tabular format, and row-bind into
+#      a single `progress` data frame.
+#
+# 2) Clean each Progress tracker sheet (inside lapply)
+#   a) Remove known non-data rows (rows 1, 2, and 4).
+#   b) Detect the header row by locating "unique_study_id" in column 1
+#      (case- and whitespace-insensitive); stop with an informative error
+#      if it is not found.
+#   c) Apply the detected header row as column names, and keep only rows
+#      below the header (the actual data region).
+#   2) Remove non-study rows where column 1 contains "AsReview".
+#
+# 3) Build a status lookup from Progress tracker
+#   a) Select and standardize key fields: `unique_study_id` and
+#      `workflow_extract` (renamed to `status_new`), trimming whitespace.
+#   b) Convert blank statuses to NA.
+#   c) Deduplicate to one row per `unique_study_id` by keeping the first
+#      non-missing `status_new` value (if any).
+#
+# 4) Merge into SUMMARY
+#   a) Standardize `unique_study_id` in `summary_status`.
+#   b) Left-join the Progress-based lookup to add `status_new` to
+#      `summary_status` (preserving all summary records).
+#   c) Relocate `status_new` next to the existing `status` column to
+#      facilitate QA of status changes (status vs status_new).
+
+```
+
+#1-2
+```{r}
+# Summary file
+summary_status <- read_excel("C:/Users/ANowak/OneDrive - CGIAR/PhD/Ch2/5.Extraction/Extraction overview-use this.xlsx", sheet = 1)
+
+# Progress tracker
+progress <- lapply(
+  1:4,
+  function(s) {
+
+    df <- read_excel(
+      "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared/Progress tracker.xlsm",
+      sheet = s,
+      col_names = FALSE
+    )
+
+    # remove rows 1, 2, 4
+    df <- df[-c(1, 2, 4), , drop = FALSE]
+
+    # find header row (unique_study_id in column 1)
+    col1 <- tolower(trimws(as.character(df[[1]])))
+    header_row <- which(col1 == "unique_study_id")[1]
+
+    if (is.na(header_row)) {
+      stop(sprintf(
+        "Header row with 'unique_study_id' not found on sheet %s.", s
+      ))
+    }
+
+    # apply header
+    header <- as.character(unlist(df[header_row, ], use.names = FALSE))
+    df2 <- df[(header_row + 1):nrow(df), , drop = FALSE]
+    names(df2) <- header
+
+    # remove rows where column 1 contains 'AsReview'
+    df2 <- df2[!grepl("AsReview", as.character(df2[[1]]), ignore.case = TRUE), ]
+
+    df2
+  }
+) |> bind_rows()
+```
+
+# 3, 4
+
+
+```{r}
+# Build a lookup from PROGRESS: unique_study_id -> workflow_extract
+progress_lookup <- progress |>
+  transmute(
+    unique_study_id = str_trim(as.character(unique_study_id)),
+    status_new = str_trim(as.character(extract_status))
+  ) |>
+  mutate(status_new = na_if(status_new, "")) |>
+  group_by(unique_study_id) |>
+  summarise(
+    status_new = dplyr::first(na.omit(status_new), default = NA_character_),
+    .groups = "drop"
+  )
+
+# Join onto SUMMARY to create status_new in summary_status
+summary_status <- summary_status |>
+  mutate(unique_study_id = str_trim(as.character(unique_study_id))) |>
+  left_join(progress_lookup, by = "unique_study_id") |>
+  mutate(
+    status = str_trim(as.character(status)),
+    status = na_if(status, ""),
+    status_new = coalesce(status_new, status)   # <-- fill only NAs in status_new
+  ) |>
+  relocate(status_new, .after = status)
+
+```
+
+# check for inconsistencies and misisng information
+```{r}
+## study ids in summary sheet and not in progress tracker
+in_summary_only <- summary_status %>%
+  anti_join(progress, by = "unique_study_id")
+  
+## study ids in progress tracker and not in summary
+in_progress_only <- progress %>%
+  anti_join(summary_status, by = "unique_study_id")
+
+## records were status labels differ across status and status_new columns in the summary df
+status_mismatch <- summary_status %>%
+  filter(status != status_new)
+```
+
+
+
+# Status of extractions
+```{r}
+# summary of extractions
+status <- summary_status %>%
+  count(status_new, name = "n") %>%
+  mutate(pct = 100 * n / sum(n))
+
+# n experimental and quasi-experimental studies by status type
+status_priority <- summary_status %>%
+  mutate(
+    status_grp = if_else(is.na(status_new), "NA", as.character(status_new)),
+    has_label_new = !is.na(label_new) & as.character(label_new) != ""
+  ) %>%
+  filter(status_grp %in% c("completed","in progress","queued","stopped","NA")) %>%
+  group_by(status_grp) %>%
+  summarise(
+    n_total = n(),
+    n_with_label_new = sum(has_label_new),
+    pct_with_label_new = 100 * n_with_label_new / n_total,
+    .groups = "drop"
+  )
+
+#check where there are inconsistencies between the progress tracker and the overview
+# Rows where status and status_new are inconsistent
+mismatches <- summary_status %>%
+  mutate(
+    status     = str_trim(str_to_lower(as.character(status))),
+    status_new = str_trim(str_to_lower(as.character(status_new))),
+
+    # map status to the "status_new" vocabulary for comparison
+    status_norm = case_when(
+      status == "extracted" ~ "completed",   # treat as equivalent
+      TRUE ~ status
+    )
+  ) %>%
+  filter(!(is.na(status_norm) & is.na(status_new))) %>%   # both NA => match
+  filter(status_norm != status_new)                       # mismatches only
+
+mismatches
+
+```
+
+
+```{r}
+# Save files
+write.csv(summary_status, "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared/WorkOverview/Summary-overview-tracker.csv")
+
+#write.csv(in_progress_only, "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared/WorkOverview/Papers-in-tracker-only.csv")
+
+#write.csv(status_mismatch, "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared/WorkOverview/Papers-in-overview-only.csv")
+
+#write.csv(status_mismatch, "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared/WorkOverview/Status-mismatch-overview-tracker.csv")
+```
+
+
+
+
+
+Worflow 
+- Load "progress" file and only take into account sheets 1-3. This is the source file. This is an xlsm format. 
+- From "progress" file, remove rows 1, 2, 4 from each sheet (these are part of the header table)
+- Load "summary" file and only take into account sheet 1. This is the overview file
+- In the "progress" df, create a column that says "status_new" 
+based on unique_study_id column, which is common to both dataframes, I need to assign to the "status_new" column the text that appears in the respective cell in the "summary" file. for the summary file, need to take into account all 3 sheets. 

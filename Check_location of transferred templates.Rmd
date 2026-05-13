@@ -1,0 +1,22 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-05-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Location of folders: "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared"
+
+# Look in the "Versions transferred" folders ("priority", "non-priority"), check if the files (.xlm) are already in any of the sub-folders in "Jabesh", "Boris", "Judy" or "Charity"
+
+# Check if theere are any duplicate papers in the team's folder - same paper in multiple template versions
+# Return the duplicate papers and inspect them
+# Communicate findngs to the team
+
+```{r}
+
+```
+

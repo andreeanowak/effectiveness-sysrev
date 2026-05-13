@@ -1,0 +1,21 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-05-13"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Check if all extracted/ QC papers marked as such in the Progress tracker are in the respective subfolders under Boris, Jabesh, Judy, Charity; 
+# Identify which paper is misplaced 
+
+Action: 
+# Communicate findngs to the team
+# place paper correctly (manually)
+
+```{r}
+
+```
+

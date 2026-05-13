@@ -3,6 +3,9 @@
 # Reference template: v1002
 # Vocabulary values for controlled fields are in codebook/vocabulary.csv
 
+### how did you come up with the decision on whether it is a required field or not?
+### where do the names come from 
+
 tables:
 
   # ── 1.Meta ──────────────────────────────────────────────────────────────────
@@ -15,17 +18,21 @@ tables:
     fields:
       - name: template_version
         row_label: "template version"
-        type: text
+        type: text ### this is controlled vocab not in controlled vocab but as data validation
         required: true
       - name: extractor
         row_label: "extractor id"
         type: controlled_vocab
         vocabulary: extractor_id
         required: true
-      - name: doc_id_src
-        row_label: "document id"
+      - name: doc_id_src ### where does the name come from 
+        row_label: "document id" 
         type: text
         required: true
+      - name: file id ### this was missing
+        row_label: "file id" ### this was missing
+        type: text ### this was missing
+        required: true ### this was missing
       - name: doi
         row_label: "doi (or url in case doi is not provided)"
         type: text
@@ -34,12 +41,16 @@ tables:
         row_label: "title"
         type: text
         required: true
+      - name: doi linked ### this was missing
+        row_label: "doi for linked paper" ### this was missing
+        type: text ### this was missing 
+        required: false ### this was missing
 
   # ── 2a.Area ─────────────────────────────────────────────────────────────────
   # Tabular: one row per site ID. Header at row 3, data from row 6.
   area_general:
     sheet: "2a.Area"
-    mode: dynamic
+    mode: dynamic ### what does dynamic mean?
     header_row: 3
     data_start_row: 6
     fields:
@@ -47,10 +58,10 @@ tables:
         type: controlled_vocab
         vocabulary: country
         required: true
-      - name: area
+      - name: study area ### this was renamed from area to study area
         type: text
         required: true
-      - name: area_type
+      - name: study area type ### this was renamed from area to study area
         type: controlled_vocab
         vocabulary: study_area_type
       - name: admin_high

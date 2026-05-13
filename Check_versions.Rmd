@@ -1,0 +1,149 @@
+---
+title: "Untitled"
+output: html_document
+date: "2026-04-15"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+#-----------------------------------------------#
+DO NOT MODIFY SCRIPT
+#-----------------------------------------------#
+
+# This script assesses the template versions used
+- how many versions
+- how many papers per version per person; 
+- how many papers are priority papers (experimental, non-experimental), by version name
+
+
+```{r}
+# ── 0. Configuration ──────────────────────────────────────────────────────────
+
+base_path   <- "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared"
+extractors  <- c("Boris", "Charity", "Jabesh", "Judy")
+valid_subfolders <- c("1.Work in progress", "2.Extracted", "3.Quality control")
+
+# ── 1. Find all Excel files in valid subfolders ───────────────────────────────
+
+all_files <- map_dfr(extractors, function(extractor) {
+  map_dfr(valid_subfolders, function(subfolder) {
+    folder_path <- file.path(base_path, extractor, subfolder)
+    
+    if (!dir.exists(folder_path)) return(tibble())  # skip if folder doesn't exist
+    
+    files <- list.files(
+      path       = folder_path,
+      pattern    = "\\.xlsm$|\\.xlsx$|\\.xls$",
+      full.names = TRUE,
+      recursive  = FALSE  # set TRUE if there are sub-sub-folders
+    )
+    
+    if (length(files) == 0) return(tibble())
+    
+    tibble(
+      extractor = extractor,
+      subfolder = subfolder,
+      filepath  = files,
+      filename  = basename(files)
+    )
+  })
+})
+
+cat("Total files found:", nrow(all_files), "\n")
+print(all_files %>% count(extractor, subfolder))
+
+# ── 2. Detect version from each file ─────────────────────────────────────────
+detect_version <- function(filepath) {
+  filename <- basename(filepath)
+  
+  # Remove extension
+  name_no_ext <- tools::file_path_sans_ext(filename)
+  
+  # Extract everything before the first hyphen, strip spaces
+  before_hyphen <- str_trim(str_extract(name_no_ext, "^[^-]+"))
+  
+  # Normalise: remove spaces and dots between "v" and the number
+  # e.g. "v.1710" -> "v1710", "v. 1710" -> "v1710", "v0611" -> "v0611"
+  version_clean <- before_hyphen %>%
+    str_to_lower() %>%                    # ensure lowercase "v"
+    str_replace("^v[.\\s]+", "v") %>%     # remove dot/space after "v"
+    str_remove_all("\\s")                 # remove any remaining spaces
+  
+  return(version_clean)
+}
+
+# ── Quick test before running on all files ────────────────────────────────────
+
+test_names <- c(
+  "v.1710 - JM00466.xlsm",
+  "v0611-JO00829.xlsm",
+  "v0611 - JO00829.xlsm",
+  "v. 1710 - JM00123.xlsm",
+  "v.0611 - AB00001.xlsm",
+  "V0611 - CD00002.xlsm",     # uppercase V
+  "v 1908 - EF00003.xlsm"     # space instead of dot
+)
+
+tibble(
+  original  = test_names,
+  version   = map_chr(test_names, ~ detect_version(.x))
+)
+
+
+all_files <- all_files %>%
+  mutate(version = map_chr(filepath, detect_version))
+
+cat("\nVersion distribution across all files:\n")
+print(all_files %>%                        # start with your full file inventory
+        count(version, sort = TRUE) %>%    # count how many FILES per version, sorted largest first
+        mutate(pct = n / sum(n) * 100))    # add a % column
+
+
+all_files <- all_files %>%
+  mutate(
+    transfer_effort = case_when(
+      version %in% c("v1710", "v1908", "v3007") ~ "easy",
+      version == "v1002" ~ "current",
+      TRUE ~ "hard"
+    )
+  )
+```
+
+# Summarize
+```{r}
+library(dplyr)
+
+papers_per_version <- all_files %>%
+  count(version, name = "n_papers")
+
+
+papers_per_version_extractor <- all_files %>%
+  count(version, extractor, transfer_effort, name = "n_papers")
+
+
+# "hard" papers to be transferred
+hard <- all_files %>%
+  filter(transfer_effort == "hard")
+
+hard_per_extractor <- hard %>%
+  count(extractor, name = "n_hard_papers")
+
+# save 
+library(writexl)
+write_xlsx(hard, "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared/Papers_to_transfer.xlsx")
+
+
+# "easy" papers to be transferred with AI
+easy <- all_files %>%
+  filter(transfer_effort == "easy")
+
+easy_per_extractor <- easy %>%
+  count(extractor, name = "n_hard_papers")
+
+write_xlsx(easy, "C:/Users/ANowak/OneDrive - CGIAR/AE-SysRev-shared/Papers_to_transfer_with_AI.xlsx")
+
+```
+
