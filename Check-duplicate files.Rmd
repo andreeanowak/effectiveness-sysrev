@@ -1,5 +1,33 @@
-```r
-# EDIT: set the root folders you want to scan
+---
+title: "Duplicate XLSM File ID Check"
+author: "Charity Juma"
+date: "2026-05-18"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+# Overview
+
+This report scans multiple project folders for `.xlsm` files and identifies duplicate file IDs based on the last 5 digits found before the `.xlsm` extension.
+
+The workflow:
+
+1. Scan all specified folders recursively
+2. Extract the final 5-digit identifier from filenames
+3. Identify duplicate IDs
+4. Export outputs to CSV files
+
+# Load Folder Paths
+
+```{r folders}
+# Root folders to scan
 folders <- c(
   "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Charity/2.Extracted",
   "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Charity/3.Quality control",
@@ -14,29 +42,55 @@ folders <- c(
   "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Charity/1.Work in progress",
   "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Boris/1.Work in progress"
 )
+```
 
-# Collect files
+# Collect XLSM Files
+
+This section searches all folders recursively and lists all `.xlsm` files.
+
+```{r collect-files}
 files <- unlist(lapply(folders, function(r) {
-  list.files(r, pattern = "\\.xlsm$", full.names = TRUE, recursive = TRUE)
+  list.files(
+    r,
+    pattern = "\\.xlsm$",
+    full.names = TRUE,
+    recursive = TRUE
+  )
 }), use.names = FALSE)
 
 cat("Total .xlsm files found:", length(files), "\n")
+```
 
-# Extract last 5 digits before .xlsm
+# Extract Last 5-Digit ID
+
+The following function extracts the last 5 digits before the `.xlsm` extension.
+
+```{r extract-ids}
 get_last5 <- function(path) {
+  
   base <- basename(path)
+  
   m <- regexpr("(\\d{5})(?=\\.xlsm$)", base, perl = TRUE)
-
+  
   if (m[1] == -1) {
     return(NA_character_)
   }
-
+  
   regmatches(base, m)
 }
 
 ids5 <- vapply(files, get_last5, FUN.VALUE = character(1))
+```
 
-# Build table
+# Build File Table
+
+Create a data frame containing:
+
+- Extracted ID
+- File name
+- Full file path
+
+```{r build-table}
 df <- data.frame(
   id_last5 = ids5,
   file_name = basename(files),
@@ -44,26 +98,80 @@ df <- data.frame(
   stringsAsFactors = FALSE
 )
 
-# Show files that don't match the pattern
+head(df)
+```
+
+# Files Without Detectable IDs
+
+Display files that do not contain a valid 5-digit ID before `.xlsm`.
+
+```{r missing-ids}
 no_id <- df[is.na(df$id_last5), ]
 
 if (nrow(no_id) > 0) {
-  cat("\nFiles with NO last-5-digit ID detected:\n")
-  print(no_id[, c("file_name", "file_path")])
+  
+  cat("Files with NO last-5-digit ID detected:\n")
+  
+  no_id[, c("file_name", "file_path")]
+  
+} else {
+  
+  cat("All files contain detectable IDs.")
 }
+```
 
+# Detect Duplicate IDs
+
+Identify duplicate 5-digit IDs appearing in multiple files.
+
+```{r duplicates}
 df_ok <- df[!is.na(df$id_last5), ]
 
-# Find duplicates
 dup_ids <- names(which(table(df_ok$id_last5) > 1))
 
 dups <- df_ok[df_ok$id_last5 %in% dup_ids, ]
+
 dups <- dups[order(dups$id_last5, dups$file_name), ]
 
-cat("\nDuplicate ID groups found:", length(dup_ids), "\n")
-print(dups)
-
-# Optional: save outputs
-write.csv(df_ok, "all_files_with_last5_id.csv", row.names = FALSE)
-write.csv(dups, "duplicate_last5_ids.csv", row.names = FALSE)
+cat("Duplicate ID groups found:", length(dup_ids), "\n")
 ```
+
+# Duplicate File Results
+
+```{r show-duplicates}
+dups
+```
+
+# Export Results
+
+Save outputs as CSV files.
+
+```{r export-results}
+write.csv(
+  df_ok,
+  "all_files_with_last5_id.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  dups,
+  "duplicate_last5_ids.csv",
+  row.names = FALSE
+)
+
+cat("CSV exports completed successfully.")
+```
+
+# Summary
+
+This report:
+
+- Scanned all specified folders
+- Extracted 5-digit identifiers from `.xlsm` files
+- Detected duplicate IDs
+- Exported results for review
+
+Generated output files:
+
+- `all_files_with_last5_id.csv`
+- `duplicate_last5_ids.csv`
