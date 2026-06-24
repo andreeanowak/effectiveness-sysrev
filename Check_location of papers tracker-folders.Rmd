@@ -1,7 +1,7 @@
 ---
 title: "Untitled"
 output: html_document
-date: "2026-05-13"
+date: "2026-06-24"
 ---
 
 ```{r setup, include=FALSE}
@@ -17,5 +17,430 @@ Action:
 
 ```{r}
 
-```
+library(readxl)
+
+# ============================================================
+# v1002 Misplaced File Check using Extract + QC sheets
+#
+# Purpose:
+#   Identify papers that are in the wrong workflow folder.
+#
+# Important rule:
+#   Folder matching is done by PAPER ID, not by full file version.
+#   Example:
+#      Tracker expects: v1002-JM00505.xlsm
+#      Folder may contain: v0611-JM00505.xlsm
+#   These are treated as the same paper because both are JM00505.
+#
+# Folder rules:
+#   1. Not yet in QC sheet                           -> 2.Extracted
+#   2. QC status = rejected                          -> 5.Rejected
+#   3. QC status = queued                            -> 4.Queued
+#   4. QC status = completed + final check yes-all   -> 3.Quality control
+#   5. QC status = completed + zero/no comments      -> 3.Quality control
+#   6. QC started but comments not resolved          -> 2.Extracted
+#
+# Also flags possible self-QC cases.
+#
+# Output:
+#   v1002_misplaced_files_qc_logic.csv
+# ============================================================
+
+progress_file <- "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Progress tracker.xlsm"
+
+extract_sheets_requested <- c("BS-Extract", "JM-Extract", "JO-Extract", "CJ-Extract")
+qc_sheets_requested <- c("BS-QC", "JM-QC", "JO-QC", "CJ-QC")
+
+base_paths <- c(
+  BS = "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Boris",
+  JO = "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Jabesh",
+  JM = "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Judy",
+  CJ = "C:/Users/cjuma/CGIAR/Nowak, Andreea (Alliance Bioversity-CIAT) - AE-SysRev-shared/Charity"
+)
+
+output_file <- "v1002_misplaced_files_qc_logic.csv"
+
+# -----------------------------
+# Helper functions
+# -----------------------------
+
+clean_text <- function(x) {
+  x <- as.character(x)
+  x[is.na(x)] <- ""
+  x <- gsub("[\r\n]+", " ", x)
+  x <- trimws(x)
+  gsub("\\s+", " ", x)
+}
+
+norm_text <- function(x) {
+  tolower(clean_text(x))
+}
+
+clean_study_id <- function(x) {
+  x <- clean_text(x)
+  x <- gsub("\\.xlsm$", "", x, ignore.case = TRUE)
+  x <- gsub("^v[0-9]+-", "", x, ignore.case = TRUE)
+  x <- gsub("^v1002-", "", x, ignore.case = TRUE)
+  x
+}
+
+is_real_study_id <- function(x) {
+  grepl("^(BS|JM|JO|CJ)[0-9]+$", clean_study_id(x), ignore.case = TRUE)
+}
+
+get_prefix <- function(x) {
+  toupper(sub("^([A-Za-z]+).*", "\\1", clean_study_id(x)))
+}
+
+make_expected_file <- function(x) {
+  paste0("v1002-", clean_study_id(x), ".xlsm")
+}
+
+extract_study_id_from_file <- function(file_name) {
+  x <- basename(file_name)
+  x <- gsub("\\.xlsm$", "", x, ignore.case = TRUE)
+  x <- gsub("^v[0-9]+-", "", x, ignore.case = TRUE)
+  x
+}
+
+normalise_status <- function(x) {
+  x <- norm_text(x)
+  x[x %in% c("complete")] <- "completed"
+  x[x %in% c("na", "n.a", "n.a.", "n/a")] <- "n/a"
+  x[x %in% c("reject")] <- "rejected"
+  x[x %in% c("queue")] <- "queued"
+  x
+}
+
+list_xlsm_files <- function(folder) {
+  if (!dir.exists(folder)) return(character(0))
+
+  list.files(
+    folder,
+    pattern = "^v[0-9]+.*\\.xlsm$",
+    full.names = TRUE,
+    recursive = TRUE
+  )
+}
+
+bucket_to_folder <- function(prefix, bucket) {
+  subfolder <- if (bucket == "EXTRACTED") {
+    "2.Extracted"
+  } else if (bucket == "QC") {
+    "3.Quality control"
+  } else if (bucket == "QUEUED") {
+    "4.Queued"
+  } else if (bucket == "REJECTED") {
+    "5.Rejected"
+  } else {
+    NA_character_
+  }
+
+  file.path(base_paths[[prefix]], subfolder)
+}
+
+get_expected_bucket <- function(in_qc_sheet, qc_status, comments_addressed, final_check) {
+  qc_status <- normalise_status(qc_status)
+  comments_addressed <- norm_text(comments_addressed)
+  final_check <- norm_text(final_check)
+
+  # Not yet listed in QC sheet
+  if (!in_qc_sheet) return("EXTRACTED")
+
+  # Direct QC outcomes
+  if (qc_status == "rejected") return("REJECTED")
+  if (qc_status == "queued") return("QUEUED")
+
+  # Fully completed QC
+  if (qc_status == "completed" && final_check == "yes-all") return("QC")
+
+  # Completed QC with zero/no comments to address
+  if (
+    qc_status == "completed" &&
+      comments_addressed %in% c("", "n/a", "na", "zero errors", "no comments")
+  ) {
+    return("QC")
+  }
+
+  # QC not yet complete, or comments still pending
+  return("EXTRACTED")
+}
+
+# -----------------------------
+# Match sheet names safely
+# -----------------------------
+
+if (!file.exists(progress_file)) {
+  stop("Progress tracker not found. Check progress_file path.")
+}
+
+available_sheets <- excel_sheets(progress_file)
+sheet_lookup <- setNames(available_sheets, trimws(available_sheets))
+
+extract_sheets <- unname(sheet_lookup[extract_sheets_requested])
+qc_sheets <- unname(sheet_lookup[qc_sheets_requested])
+
+extract_sheets <- extract_sheets[!is.na(extract_sheets)]
+qc_sheets <- qc_sheets[!is.na(qc_sheets)]
+
+if (length(extract_sheets) == 0) {
+  stop("No extract sheets found.")
+}
+
+# -----------------------------
+# Read Extract sheets
+# -----------------------------
+
+extract_list <- list()
+
+for (sheet in extract_sheets) {
+  message("Reading extract sheet: ", sheet)
+
+  dat <- suppressMessages(read_excel(progress_file, sheet = sheet, col_names = FALSE))
+  if (nrow(dat) < 5) next
+
+  # Row 1 = title
+  # Row 2 = grouped headers
+  # Row 3 = field names
+  # Row 4 = guidance row
+  # Row 5 onward = actual data
+  dat <- dat[-c(1:4), ]
+
+  tmp <- data.frame(
+    extract_sheet = sheet,
+    unique_study_id = clean_study_id(dat[[1]]),      # Column A
+    new_tool_version = clean_text(dat[[4]]),         # Column D
+    extraction_status = normalise_status(dat[[9]]),  # Column I
+    stringsAsFactors = FALSE
+  )
+
+  tmp <- tmp[
+    is_real_study_id(tmp$unique_study_id) &
+      tmp$new_tool_version == "v1002" &
+      tmp$extraction_status == "completed",
+  ]
+
+  if (nrow(tmp) > 0) {
+    extract_list[[length(extract_list) + 1]] <- tmp
+  }
+}
+
+if (length(extract_list) == 0) {
+  stop("No completed v1002 extracted records found.")
+}
+
+extract_done <- unique(do.call(rbind, extract_list))
+
+# -----------------------------
+# Read QC sheets
+# -----------------------------
+
+qc_list <- list()
+
+for (sheet in qc_sheets) {
+  message("Reading QC sheet: ", sheet)
+
+  dat <- suppressMessages(read_excel(progress_file, sheet = sheet, col_names = FALSE))
+  if (nrow(dat) < 5) next
+
+  dat <- dat[-c(1:4), ]
+
+  qcer_from_sheet <- toupper(sub("-QC$", "", trimws(sheet)))
+
+  tmp <- data.frame(
+    qc_sheet = sheet,
+    qcer_from_sheet = qcer_from_sheet,
+    unique_study_id = clean_study_id(dat[[1]]),      # Column A
+    extractor_recorded = clean_text(dat[[3]]),       # Column C
+    qc_status = normalise_status(dat[[7]]),          # Column G
+    comments_addressed = norm_text(dat[[8]]),        # Column H
+    final_qc_check = norm_text(dat[[9]]),            # Column I
+    stringsAsFactors = FALSE
+  )
+
+  tmp <- tmp[is_real_study_id(tmp$unique_study_id), ]
+
+  if (nrow(tmp) > 0) {
+    qc_list[[length(qc_list) + 1]] <- tmp
+  }
+}
+
+qc_statuses <- if (length(qc_list) > 0) {
+  unique(do.call(rbind, qc_list))
+} else {
+  data.frame(
+    qc_sheet = character(),
+    qcer_from_sheet = character(),
+    unique_study_id = character(),
+    extractor_recorded = character(),
+    qc_status = character(),
+    comments_addressed = character(),
+    final_qc_check = character(),
+    stringsAsFactors = FALSE
+  )
+}
+
+# -----------------------------
+# Merge extract-complete records with QC information
+# -----------------------------
+
+tracker <- merge(
+  extract_done,
+  qc_statuses,
+  by = "unique_study_id",
+  all.x = TRUE
+)
+
+tracker$in_qc_sheet <- !is.na(tracker$qc_sheet) & tracker$qc_sheet != ""
+
+tracker$qc_status[is.na(tracker$qc_status)] <- ""
+tracker$comments_addressed[is.na(tracker$comments_addressed)] <- ""
+tracker$final_qc_check[is.na(tracker$final_qc_check)] <- ""
+tracker$qcer_from_sheet[is.na(tracker$qcer_from_sheet)] <- ""
+
+tracker$expected_prefix <- vapply(tracker$unique_study_id, get_prefix, character(1))
+tracker$expected_file <- vapply(tracker$unique_study_id, make_expected_file, character(1))
+
+tracker$expected_bucket <- mapply(
+  get_expected_bucket,
+  tracker$in_qc_sheet,
+  tracker$qc_status,
+  tracker$comments_addressed,
+  tracker$final_qc_check
+)
+
+tracker$expected_folder <- mapply(
+  bucket_to_folder,
+  tracker$expected_prefix,
+  tracker$expected_bucket
+)
+
+tracker$own_qc_flag <- ifelse(
+  tracker$in_qc_sheet &
+    tracker$qcer_from_sheet == tracker$expected_prefix,
+  "POSSIBLE_SELF_QC",
+  ""
+)
+
+# -----------------------------
+# Build folder index
+# -----------------------------
+
+folder_index <- data.frame()
+
+for (prefix in names(base_paths)) {
+  folders_to_check <- data.frame(
+    prefix = prefix,
+    bucket = c("EXTRACTED", "QC", "QUEUED", "REJECTED"),
+    folder = file.path(
+      base_paths[[prefix]],
+      c("2.Extracted", "3.Quality control", "4.Queued", "5.Rejected")
+    ),
+    stringsAsFactors = FALSE
+  )
+
+  for (j in seq_len(nrow(folders_to_check))) {
+    files_found <- list_xlsm_files(folders_to_check$folder[j])
+
+    if (length(files_found) > 0) {
+      folder_index <- rbind(
+        folder_index,
+        data.frame(
+          found_prefix = folders_to_check$prefix[j],
+          found_bucket = folders_to_check$bucket[j],
+          found_folder = folders_to_check$folder[j],
+          found_file = basename(files_found),
+          found_study_id = extract_study_id_from_file(files_found),
+          found_path = files_found,
+          stringsAsFactors = FALSE
+        )
+      )
+    }
+  }
+}
+
+# -----------------------------
+# Compare expected folder with actual folder
+# -----------------------------
+
+inventory_list <- list()
+
+for (i in seq_len(nrow(tracker))) {
+  row <- tracker[i, ]
+
+  # Match on paper ID, not file version
+  found <- folder_index[
+    tolower(folder_index$found_study_id) == tolower(row$unique_study_id),
+  ]
+
+  if (nrow(found) == 0) {
+
+    placement_status <- "MISSING_FROM_ALL_TRACKED_FOLDERS"
+    found_prefix <- found_bucket <- found_folder <- found_file <- found_path <- NA_character_
+
+  } else if (any(
+    found$found_prefix == row$expected_prefix &
+      found$found_bucket == row$expected_bucket
+  )) {
+
+    placement_status <- "FOUND"
+
+    good <- found[
+      found$found_prefix == row$expected_prefix &
+        found$found_bucket == row$expected_bucket,
+    ][1, ]
+
+    found_prefix <- good$found_prefix
+    found_bucket <- good$found_bucket
+    found_folder <- good$found_folder
+    found_file <- good$found_file
+    found_path <- good$found_path
+
+  } else {
+
+    placement_status <- "MISPLACED"
+    found_prefix <- paste(unique(found$found_prefix), collapse = "; ")
+    found_bucket <- paste(unique(found$found_bucket), collapse = "; ")
+    found_folder <- paste(unique(found$found_folder), collapse = "; ")
+    found_file <- paste(unique(found$found_file), collapse = "; ")
+    found_path <- paste(unique(found$found_path), collapse = "; ")
+  }
+
+  inventory_list[[length(inventory_list) + 1]] <- data.frame(
+    unique_study_id = row$unique_study_id,
+    expected_file = row$expected_file,
+    extract_sheet = row$extract_sheet,
+    in_qc_sheet = row$in_qc_sheet,
+    qc_sheet = row$qc_sheet,
+    qcer_from_sheet = row$qcer_from_sheet,
+    qc_status = row$qc_status,
+    comments_addressed = row$comments_addressed,
+    final_qc_check = row$final_qc_check,
+    expected_prefix = row$expected_prefix,
+    expected_bucket = row$expected_bucket,
+    expected_folder = row$expected_folder,
+    placement_status = placement_status,
+    own_qc_flag = row$own_qc_flag,
+    found_prefix = found_prefix,
+    found_bucket = found_bucket,
+    found_folder = found_folder,
+    found_file = found_file,
+    found_path = found_path,
+    stringsAsFactors = FALSE
+  )
+}
+
+inventory <- do.call(rbind, inventory_list)
+
+issues <- inventory[
+  inventory$placement_status %in% c("MISSING_FROM_ALL_TRACKED_FOLDERS", "MISPLACED") |
+    inventory$own_qc_flag == "POSSIBLE_SELF_QC",
+]
+
+write.csv(issues, output_file, row.names = FALSE)
+
+cat("\nDone.\n")
+cat("Extracted-completed v1002 records checked:", nrow(tracker), "\n")
+cat("Issues found:", nrow(issues), "\n")
+cat("Output saved to:", output_file, "\n")
 
